@@ -55,11 +55,13 @@ module spi_drv #(
 // Internal logic
 logic [2:0] spi_state;
 
+// User interface regs
 logic [$clog2(SPI_MAXLEN):0]  n_clks_reg;
 logic [SPI_MAXLEN-1:0]        tx_data_reg;
 logic [SPI_MAXLEN-1:0]        rx_miso_reg;
 logic                         spi_drv_rdy_reg;
 
+// SPI interface
 logic       SCLK_reg;
 logic       SS_N_reg;
 
@@ -89,9 +91,6 @@ always_ff @(posedge clk) begin
             begin
                if (start_cmd) begin
                   
-                  // Drive clock and slave select
-                  SS_N_reg <= 1'b0;
-                  SCLK_reg <= 1'b0;
                   
                   // Capture the data on the interface
                   tx_data_reg <= tx_data;
@@ -110,6 +109,10 @@ always_ff @(posedge clk) begin
                   // Drive ready high when no start command
                   spi_drv_rdy_reg <= 1'b1;
                end
+
+               // Drive clock and slave select
+               SS_N_reg <= 1'b1;
+               SCLK_reg <= 1'b0;
             end
             
          // Start transaction half of SCLK's cycle before enabling SCLK
@@ -120,11 +123,16 @@ always_ff @(posedge clk) begin
                clk_counter <= clk_counter + 1'b1;
 
                if (clk_counter == (CLK_DIVIDE/2)-1) begin
-                  clk_counter <= 0;
-                  spi_state <= DO_TXN;
 
+                  clk_counter <= 0;
+                  
+                  // Drive slave select
+                  SS_N_reg <= 1'b0;
+
+                  // Capture MISO and shift
                   rx_miso_reg <= {rx_miso_reg[SPI_MAXLEN-2:0],MISO}; 
 
+                  spi_state <= DO_TXN;
                end
             end
 
@@ -132,16 +140,19 @@ always_ff @(posedge clk) begin
          DO_TXN:
             begin
 
-
                // Increment clock counter
                clk_counter <= clk_counter + 1'b1; 
 
                // When counter is at half drive the clock
                if (clk_counter == (CLK_DIVIDE/2)-1) begin
+
                   SCLK_reg <= ~SCLK_reg; 
+
                // Drive the clock again and reset
                end else if (clk_counter == CLK_DIVIDE-1) begin
                   SCLK_reg <= ~SCLK_reg; 
+                  
+                  // Reset clock counter and increment transaction counter 
                   clk_counter <= 0;
                   n_counter <= n_counter + 1'b1;
                   
@@ -153,6 +164,7 @@ always_ff @(posedge clk) begin
                   // Done the transaction
                   if (n_counter == n_clks_reg-1) begin
                      spi_state <= AWAIT_START;
+                     SS_N_reg <= 1'b1;
                   end
                end 
             end
@@ -162,10 +174,12 @@ always_ff @(posedge clk) begin
 end
 
 // Multiplex MOSI to right tx_data_reg value
-assign SCLK = SCLK_reg;
 assign MOSI = tx_data_reg[n_clks-1];
 assign SS_N = SS_N_reg;
+assign SCLK = SCLK_reg;
 
+// User interface assigns
 assign spi_drv_rdy = spi_drv_rdy_reg;
 assign rx_miso = rx_miso_reg;
+
 endmodule
